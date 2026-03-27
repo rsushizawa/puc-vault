@@ -342,3 +342,285 @@ BEGIN
 	WHERE id = p_validado;
 END;
 $$;
+
+-- popular o BD
+DO $$
+DECLARE
+    i INT;
+
+    v_user_ids   INT[] := '{}';
+    v_forum_ids  INT[] := '{}';
+    v_tag_ids    INT[] := '{}';
+    v_post_ids   INT[] := '{}';
+
+    v_id INT;
+
+    v_username TEXT;
+    v_forum_title TEXT;
+    v_tag_name TEXT;
+BEGIN
+    -- usuários
+    FOR i IN 1..10 LOOP
+        v_username := 'user' || i;
+
+        CALL user_insert(
+            'User ' || i,
+            v_username,
+            v_username || '@email.com',
+            'hash' || i
+        );
+
+        SELECT id INTO v_id
+        FROM usuario
+        WHERE username = v_username;
+
+        v_user_ids := array_append(v_user_ids, v_id);
+    END LOOP;
+
+    -- fóruns
+    FOR i IN 1..10 LOOP
+        v_forum_title := 'Forum ' || i;
+
+        CALL forum_insert(
+            v_forum_title,
+            'Descricao ' || i,
+            v_user_ids[i]
+        );
+
+        SELECT id INTO v_id
+        FROM forum
+        WHERE titulo = v_forum_title;
+
+        v_forum_ids := array_append(v_forum_ids, v_id);
+    END LOOP;
+
+    -- tags
+    FOR i IN 1..10 LOOP
+        v_tag_name := 'tag' || i;
+
+        CALL tag_insert(
+            v_tag_name,
+            v_user_ids[i]
+        );
+
+        SELECT id INTO v_id
+        FROM tag
+        WHERE tag = v_tag_name;
+
+        v_tag_ids := array_append(v_tag_ids, v_id);
+    END LOOP;
+
+    -- postagens
+    FOR i IN 1..10 LOOP
+        CALL postagem_insert(
+            'Conteudo ' || i,
+            v_user_ids[i],
+            v_forum_ids[i],
+            NULL,
+            v_id
+        );
+
+        v_post_ids := array_append(v_post_ids, v_id);
+    END LOOP;
+
+    -- comentários
+    FOR i IN 1..10 LOOP
+        CALL comentario_insert(
+            'Comentario ' || i,
+            v_user_ids[i],
+            v_post_ids[i],
+            NULL,
+            v_id
+        );
+    END LOOP;
+
+    -- denúncia de usuário
+    FOR i IN 1..10 LOOP
+        CALL denuncia_usuario_insert(
+            'tipo' || i,
+            v_user_ids[i],
+            v_user_ids[(i % 10) + 1],
+            v_id
+        );
+    END LOOP;
+
+    -- denúncia de conteúdo
+    FOR i IN 1..10 LOOP
+        CALL denuncia_conteudo_insert(
+            'tipo_c' || i,
+            v_user_ids[i],
+            v_post_ids[i],
+            v_id
+        );
+    END LOOP;
+
+    -- avaliações
+    FOR i IN 1..10 LOOP
+        CALL avaliar_postagem(
+            v_user_ids[i],
+            v_post_ids[i],
+            CASE WHEN i % 2 = 0 THEN -1 ELSE 1 END
+        );
+    END LOOP;
+
+    -- classificação
+    FOR i IN 1..10 LOOP
+        CALL classificar_postagem(
+            v_post_ids[i],
+            v_tag_ids[i]
+        );
+    END LOOP;
+
+    -- seguir fórum
+    FOR i IN 1..10 LOOP
+        CALL seguir_forum(
+            v_user_ids[i],
+            v_forum_ids[i]
+        );
+    END LOOP;
+
+END $$;
+
+-- updates
+DO $$
+DECLARE
+    i INT;
+
+    v_user_ids   INT[] := '{}';
+    v_forum_ids  INT[] := '{}';
+    v_tag_ids    INT[] := '{}';
+
+    v_id INT;
+BEGIN
+    -- carregar usuários
+    FOR v_id IN SELECT id FROM usuario ORDER BY id LOOP
+        v_user_ids := array_append(v_user_ids, v_id);
+    END LOOP;
+
+    -- carregar fóruns
+    FOR v_id IN SELECT id FROM forum ORDER BY id LOOP
+        v_forum_ids := array_append(v_forum_ids, v_id);
+    END LOOP;
+
+    -- carregar tags
+    FOR v_id IN SELECT id FROM tag ORDER BY id LOOP
+        v_tag_ids := array_append(v_tag_ids, v_id);
+    END LOOP;
+
+    -- validar fóruns
+    FOR i IN 1..array_length(v_forum_ids, 1) LOOP
+        CALL validar_forum(
+            v_user_ids[(i % array_length(v_user_ids, 1)) + 1],
+            v_forum_ids[i]
+        );
+    END LOOP;
+
+    -- validar tags
+    FOR i IN 1..array_length(v_tag_ids, 1) LOOP
+        CALL validar_tag(
+            v_user_ids[(i % array_length(v_user_ids, 1)) + 1],
+            v_tag_ids[i]
+        );
+    END LOOP;
+
+END $$;
+
+-- selects
+-- usuario
+SELECT *
+FROM usuario;
+
+-- forum + criador + validador
+SELECT 
+    f.*,
+    u1.username AS criado_por_username,
+    u2.username AS validado_por_username
+FROM forum f
+JOIN usuario u1 ON f.criado_por = u1.id
+LEFT JOIN usuario u2 ON f.validado_por = u2.id;
+
+-- tag + criador + validador
+SELECT 
+    t.*,
+    u1.username AS criado_por_username,
+    u2.username AS validado_por_username
+FROM tag t
+JOIN usuario u1 ON t.criado_por = u1.id
+LEFT JOIN usuario u2 ON t.validado_por = u2.id;
+
+-- postaegm + conteudo + forum
+SELECT 
+    c.id,
+    c.conteudo,
+    c.status,
+    c.data_criacao,
+    u.username AS autor,
+    f.titulo AS forum,
+    p.arquivo
+FROM postagem p
+JOIN conteudo c ON p.id = c.id
+JOIN usuario u ON c.criado_por = u.id
+JOIN forum f ON p.forum = f.id;
+
+-- conteudo + comentario + postagem pai
+SELECT 
+    c.id,
+    c.conteudo,
+    c.data_criacao,
+    u.username AS autor,
+    cm.postagem_pai,
+    cm.comentario_pai
+FROM comentario cm
+JOIN conteudo c ON cm.id = c.id
+JOIN usuario u ON c.criado_por = u.id;
+
+-- denuncia usuario
+SELECT 
+    d.id,
+    d.tipo,
+    d.data_criacao,
+    u1.username AS denunciante,
+    u2.username AS denunciado
+FROM denuncia_usuario du
+JOIN denuncia d ON du.id = d.id
+JOIN usuario u1 ON d.denunciante = u1.id
+JOIN usuario u2 ON du.usuario_denunciado = u2.id;
+
+-- denuncia conteudo
+SELECT 
+    d.id,
+    d.tipo,
+    d.data_criacao,
+    u.username AS denunciante,
+    c.conteudo AS conteudo_denunciado
+FROM denuncia_conteudo dc
+JOIN denuncia d ON dc.id = d.id
+JOIN usuario u ON d.denunciante = u.id
+JOIN conteudo c ON dc.conteudo_denunciado = c.id;
+
+-- avaliacao + usuario + conteudo + postagem
+SELECT 
+    u.username,
+    c.conteudo,
+    a.valor_avaliacao
+FROM avaliacao a
+JOIN usuario u ON a.usuario = u.id
+JOIN postagem p ON a.postagem = p.id
+JOIN conteudo c ON p.id = c.id;
+
+-- classificação
+SELECT 
+    c.conteudo,
+    t.tag
+FROM classificacao cl
+JOIN postagem p ON cl.postagem = p.id
+JOIN conteudo c ON p.id = c.id
+JOIN tag t ON cl.tag = t.id;
+
+-- follow
+SELECT 
+    u.username,
+    f.titulo
+FROM segue s
+JOIN usuario u ON s.usuario = u.id
+JOIN forum f ON s.forum = f.id;
