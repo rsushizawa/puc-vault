@@ -98,20 +98,20 @@ CREATE TABLE denuncia(
 -- DENUNCIA -> DENUNCIA PARA USUARIO ESPECIALIZADO
 CREATE TABLE denuncia_usuario(
 	id INT PRIMARY KEY REFERENCES denuncia(id),
-	usuario_denunciado INT REFERENCES usuario(id)
+	usuario_denunciado INT NOT NULL REFERENCES usuario(id)
 );
 
 -- DENUNCIA -> DENUNCIA PARA CONTEUDO ESPECIALIZADO
 CREATE TABLE denuncia_conteudo(
 	id INT PRIMARY KEY REFERENCES denuncia(id),
-	conteudo_denunciado INT REFERENCES conteudo(id)
+	conteudo_denunciado INT NOT NULL REFERENCES conteudo(id)
 );
 
 --TABELAS AUXILIARES
 -- AVALIAÇÃO POSTAGEM (N) <-> USUARIO (N)
 CREATE TABLE avaliacao(
-	usuario INT REFERENCES usuario(id),
-	postagem INT REFERENCES postagem(id),
+	usuario INT NOT NULL REFERENCES usuario(id),
+	postagem INT NOT NULL REFERENCES postagem(id),
 	valor_avaliacao SMALLINT NOT NULL,
 
 	CONSTRAINT valor_avaliacao
@@ -122,16 +122,16 @@ CREATE TABLE avaliacao(
 
 -- CLASSIFICAÇÃO POSTAGEM (N) <-> TAGS (N)
 CREATE TABLE classificacao(
-	postagem INT REFERENCES postagem(id),
-	tag INT REFERENCES tag(id),
+	postagem INT NOT NULL REFERENCES postagem(id),
+	tag INT NOT NULL REFERENCES tag(id),
 	
 	PRIMARY KEY(postagem, tag)
 );
 
 -- SEGUE USUARIO (N) <-> FÓRUM (N)
 CREATE TABLE segue(
-	usuario INT REFERENCES usuario(id),
-	forum INT REFERENCES forum(id),
+	usuario INT NOT NULL REFERENCES usuario(id),
+	forum INT NOT NULL REFERENCES forum(id),
 	
 	PRIMARY KEY(usuario, forum)
 );
