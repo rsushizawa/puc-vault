@@ -1,32 +1,20 @@
 const express = require('express');
 const cors = require('cors');
-const { z, toLowerCase } = require('zod');
+const { z } = require('zod');
 const bcrypt = require('bcryptjs');
-const { tr } = require('zod/locales');
-const { error, log } = require('console');
 const { Pool } = require('pg');
-
-
 const path = require('path');
-const fs = require('fs');
 
-// 1. Defina o caminho (os 4 níveis que já validamos)
 const envPath = path.resolve(__dirname, '../../../../.env');
 
-// 2. Carregue o dotenv IMEDIATAMENTE
 require('dotenv').config({ path: envPath });
 
-// 3. SÓ AGORA você lê as variáveis do process.env
 const hostAccess = process.env.DB_HOST;
 const userAccess = process.env.DB_USER;
 const passAccess = process.env.DB_PASS;
 const portAccess = process.env.DB_PORT;
 const databaseAcess = process.env.DB_NAME;
 
-console.log('--- TESTE DE CONEXÃO ---');
-console.log('Conectando em:', hostAccess); // Aqui NÃO pode ser undefined agora
-console.log('Usuário:', userAccess);
-console.log('------------------------');
 const pool = new Pool({
   host: hostAccess,
   port: portAccess,
@@ -38,15 +26,61 @@ const pool = new Pool({
   }
 });
 
-async function addToDB(name, username, email, hashedPassword) {
+async function validateCredentials(userEmail, password) {
+  let client;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
+    console.log('conexão sucedida');
+    let returnvalue = await client.query('SELECT * FROM buscar_usuario_pelo_username( $1 )', [userEmail]);
+    if (returnvalue.rowCount === 0) {
+      returnvalue = await client.query('SELECT * FROM buscar_usuario_pelo_email( $1 )', [userEmail]);
+    }
+    if (returnvalue.rowCount === 0) {
+      console.log('user not found');
+      return {
+        authenticated: false,
+        message: 'user or email not found'
+      };
+    }
+    const userRow = returnvalue.rows[0];
+    const passwordValid = await bcrypt.compare(password, userRow.senha_hash);
+
+    if (passwordValid) {
+      delete userRow.senha_hash;
+      console.log('login successful');
+      return {
+        authenticated: true,
+        user: userRow
+      };
+    } else {
+      console.log('login failed');
+      return {
+        authenticated: false,
+        message: 'incorrect password'
+      };
+    }
+  } catch (error) {
+    console.error('--- DETALHES DO ERRO ---');
+    console.error('Mensagem:', error.message);
+    console.error('Código Postgre:', error.code); // Ex: 23505 (duplicado), 42P01 (tabela não existe)
+    console.error('Detalhe:', error.detail);
+    console.error('Onde:', error.where);
+    console.error('------------------------');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function addToDB(name, username, email, hashedPassword) {
+  let client;
+  try {
+    client = await pool.connect();
     console.log('conexão bem sucedida');
     const queryText = 'CALL user_insert( $1, $2, $3, $4)';
     const values = [name, username, email, hashedPassword];
     await client.query(queryText, values);
     console.log('usuario inserido');
-    client.release();
   } catch (error) {
     console.error('--- DETALHES DO ERRO ---');
     console.error('Mensagem:', error.message);
@@ -54,16 +88,20 @@ async function addToDB(name, username, email, hashedPassword) {
     console.error('Detalhe:', error.detail);
     console.error('Onde:', error.where);
     console.error('------------------------');
+  } finally {
+    client.release();
   }
 }
 
+
+
 async function printDB() {
+  let client;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
     console.log('conexão bem sucedida');
     const res = await client.query('SELECT * FROM public.listar_usuarios()');
     console.table(res.rows);
-    client.release();
   } catch (error) {
     console.error('--- DETALHES DO ERRO ---');
     console.error('Mensagem:', error.message);
@@ -72,6 +110,8 @@ async function printDB() {
     console.error('Onde:', error.where);
     console.error('------------------------');
 
+  } finally {
+    client.release();
   }
 }
 
@@ -81,29 +121,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const loginDB = './loginDB.json';// bd provisorio
 
-if (!fs.existsSync(loginDB)) {
-  fs.writeFileSync(loginDB, JSON.stringify([]));
-}
 
-function readDB() {
-  try {
-    const data = fs.readFileSync(loginDB, 'utf-8');
-
-    if (!data || data.trim() === '') {
-      return [];
-    }
-    return JSON.parse(data);
-  } catch (error) {
-    console.log("Warning: failed on reading JSON. Returning blank list.", error.message);
-    return [];
-  }
-}
-
-function saveDB(loginElmnt) {
-  fs.writeFileSync(loginDB, JSON.stringify(loginElmnt, null, 2));
-}
 
 const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email("Invalid email").max(50),
@@ -117,6 +136,7 @@ app.get('/sign-in', (req, res) => {
   res.json(login);
 });
 
+//post sign-in basicamente pronto 
 app.post('/sign-in', async (req, res) => {
   const validation = loginSchema.safeParse(req.body);
 
@@ -125,32 +145,25 @@ app.post('/sign-in', async (req, res) => {
   }
 
   const { email, name, username, password } = validation.data;
-  const logins = readDB();
-  if (logins.find(u => u.email === email) || logins.find(u => u.username === username)) {
-    return res.status(400).json({ error: "This email/username already in use" });
-  }
   try {
-    const date = new Date();
     const hashedPassword = await bcrypt.hash(password, saltRounds);
-    const newLogin = {
-      id_user: logins.length > 0 ? logins[logins.length - 1].id_user + 1 : 0,
-      email: email,
-      name: name,
-      username: username,
-      password: hashedPassword,
-      creation_date: date
-    };
+
 
     await addToDB(name, username, email, hashedPassword);
     await printDB();
 
-    logins.push(newLogin);
-    saveDB(logins);
 
     res.status(201).json({ message: "Username created with success!", username });
 
   } catch (error) {
-    res.status(500).json({ error: "Error processing password" });
+    // 1. Print the full error to your terminal
+    console.error("CRITICAL ERROR IN /sign-in:", error);
+
+    // 2. You can also send the error message to Postman/Frontend temporarily for debugging
+    res.status(500).json({
+      error: "Error processing password",
+      details: error.message // Remove this line before putting your app in production!
+    });
 
   }
 
@@ -158,28 +171,21 @@ app.post('/sign-in', async (req, res) => {
 
 app.post('/login', async (req, res) => {
   const { userEmail, password } = req.body;
-  const logins = readDB();
-  const searchTerm = userEmail.toLowerCase().trim()
-
-  const user = logins.find(u => (u.email.toLowerCase().trim() === searchTerm)
-    || (u.username.toLowerCase().trim() === searchTerm));
-
-  if (!user) {
-    return res.status(401).json({ error: "Incorrect email or password" });
-  }
 
   try {
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (isMatch) {
-      res.json({
-        message: "Login successful",
-      });
-    } else {
-      res.status(401).json({ error: "Incorrect email or password" });
+    let isAuthenticated = await validateCredentials(userEmail, password);
+    if (isAuthenticated.authenticated) {
+      //entrou
+      res.status(200).json(isAuthenticated.user);
     }
+    else {
+      //fica na tela de login pq nao entrou
+      console.log('login failed', isAuthenticated.message);
+      res.status(401).json({ error: isAuthenticated.message })
+    }
+
   } catch (error) {
-    res.status(500).json({ error: "Error validating login" });
+    console.log('internal server error', error.message);
   }
 });
 
