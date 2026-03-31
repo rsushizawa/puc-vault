@@ -1,10 +1,79 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const { z, toLowerCase } = require('zod');
 const bcrypt = require('bcryptjs');
 const { tr } = require('zod/locales');
-const { error } = require('console');
+const { error, log } = require('console');
+const { Pool } = require('pg');
+
+
+const path = require('path');
+const fs = require('fs');
+
+// 1. Defina o caminho (os 4 níveis que já validamos)
+const envPath = path.resolve(__dirname, '../../../../.env');
+
+// 2. Carregue o dotenv IMEDIATAMENTE
+require('dotenv').config({ path: envPath });
+
+// 3. SÓ AGORA você lê as variáveis do process.env
+const hostAccess = process.env.DB_HOST;
+const userAccess = process.env.DB_USER;
+const passAccess = process.env.DB_PASS;
+const portAccess = process.env.DB_PORT;
+const databaseAcess = process.env.DB_NAME;
+
+console.log('--- TESTE DE CONEXÃO ---');
+console.log('Conectando em:', hostAccess); // Aqui NÃO pode ser undefined agora
+console.log('Usuário:', userAccess);
+console.log('------------------------');
+const pool = new Pool({
+  host: hostAccess,
+  port: portAccess,
+  database: databaseAcess,
+  user: userAccess,
+  password: passAccess,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+async function addToDB(name, username, email, hashedPassword) {
+  try {
+    const client = await pool.connect();
+    console.log('conexão bem sucedida');
+    const queryText = 'CALL user_insert( $1, $2, $3, $4)';
+    const values = [name, username, email, hashedPassword];
+    await client.query(queryText, values);
+    console.log('usuario inserido');
+    client.release();
+  } catch (error) {
+    console.error('--- DETALHES DO ERRO ---');
+    console.error('Mensagem:', error.message);
+    console.error('Código Postgre:', error.code); // Ex: 23505 (duplicado), 42P01 (tabela não existe)
+    console.error('Detalhe:', error.detail);
+    console.error('Onde:', error.where);
+    console.error('------------------------');
+  }
+}
+
+async function printDB() {
+  try {
+    const client = await pool.connect();
+    console.log('conexão bem sucedida');
+    const res = await client.query('SELECT * FROM public.listar_usuarios()');
+    console.table(res.rows);
+    client.release();
+  } catch (error) {
+    console.error('--- DETALHES DO ERRO ---');
+    console.error('Mensagem:', error.message);
+    console.error('Código Postgre:', error.code); // Ex: 23505 (duplicado), 42P01 (tabela não existe)
+    console.error('Detalhe:', error.detail);
+    console.error('Onde:', error.where);
+    console.error('------------------------');
+
+  }
+}
 
 const saltRounds = 10;
 
@@ -71,6 +140,9 @@ app.post('/sign-in', async (req, res) => {
       password: hashedPassword,
       creation_date: date
     };
+
+    await addToDB(name, username, email, hashedPassword);
+    await printDB();
 
     logins.push(newLogin);
     saveDB(logins);
