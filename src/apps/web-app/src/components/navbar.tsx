@@ -1,83 +1,33 @@
-import { useState } from "react";
+"use client";
 
-export const TopNavBar = ({ activeLink = "Home" }) => {
-  const [q, setQ] = useState("");
+import React, { useState } from "react";
+import Link from "next/link";
+import { Search, User, Menu, X } from "lucide-react";
+
+const NavBar = () => {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <header
-      style={{
-        background: T.bg,
-        height: 64,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 24px",
-        boxSizing: "border-box",
-        position: "sticky",
-        top: 0,
-        zIndex: 50,
-        width: "100%",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
-        <span
-          style={{
-            fontSize: 20,
-            fontWeight: 700,
-            color: T.textPrimary,
-            letterSpacing: "-0.5px",
-            fontFamily: F,
-          }}
-        >
-          PucVault
-        </span>
-        <nav style={{ display: "flex", gap: 24 }}>
-          {["Home", "Popular", "All"].map((l) => (
-            <a
-              key={l}
-              href="#"
-              style={{
-                fontSize: 16,
-                color: T.textSecondary,
-                textDecoration: "none",
-                fontWeight: activeLink === l ? 600 : 400,
-                fontFamily: F,
-              }}
-            >
-              {l}
-            </a>
-          ))}
-        </nav>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div
-          style={{
-            background: T.surface,
-            borderRadius: T.radius,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 12px",
-          }}
-        >
-          <Search size={14} />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search communities..."
-            style={{
-              background: "none",
-              border: "none",
-              outline: "none",
-              color: T.textDim,
-              fontSize: 14,
-              width: 220,
-              fontFamily: F,
-            }}
-          />
+    <nav className="flex items-center justify-between bg-surface-base h-[64px] px-6">
+      <div className="flex gap-9">
+        <span className="text-text-primary font-bold">PUCVault</span>
+        <div className="flex text-text-secondary text-[16px] gap-6">
+          <Link href={"/"}>Home</Link>
+          <Link href={"/popular"}>Popular</Link>
+          <Link href={"/all"}>All</Link>
         </div>
-        <Bell size={16} /> <Grid size={16} />
-        <Avatar size={32} initials="U" bg={T.surfaceHover} />
       </div>
-    </header>
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 bg-surface-raised px-3 py-1.5 rounded-sm">
+          <Search size={16} />
+          <input type="search" placeholder="Search communities..." />
+        </div>
+        <div className="flex items-center justify-center rounded-full bg-surface-overlay size-8">
+          <User size={16} />
+        </div>
+      </div>
+    </nav>
   );
 };
+
+export default NavBar;
