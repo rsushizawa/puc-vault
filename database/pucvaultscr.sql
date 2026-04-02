@@ -6,10 +6,12 @@ CREATE TABLE private.identidade_visual(
 	img_perfil TEXT,		-- UNIQUE ID ON CLOUDFLARE IMAGES API
 	img_banner TEXT,		-- UNIQUE ID ON CLOUDFLARE IMAGES API
 	
-	img_perfil_modificado_em TIMESTAMP WITH TIME ZONE,
-	img_banner_modificado_em TIMESTAMP WITH TIME ZONE
+	-- data de criação da identidade visual = data da criação da entidade relacionada
+	img_perfil_modificado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+	img_banner_modificado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- nome, username, cargo, data da criação, 
 CREATE TABLE private.usuario(
 	id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	nome VARCHAR(75) NOT NULL,
@@ -20,8 +22,12 @@ CREATE TABLE private.usuario(
 	data_criacao TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 	senha_hash TEXT NOT NULL,
 	
+	identidade_visual INT NOT NULL,
+	
 	CONSTRAINT status_usuario
-		CHECK (status IN ('ACTIVE', 'MUTED', 'BANNED'))
+		CHECK (status IN ('ACTIVE', 'MUTED', 'BANNED')),
+		
+	FOREIGN KEY(identidade_visual) REFERENCES private.identidade_visual(id)
 );
 
 -- FORUM
@@ -34,6 +40,7 @@ CREATE TABLE private.forum(
 	
 	criado_por INT NOT NULL,
 	validado_por INT NULL,
+	identidade_visual INT NOT NULL,
 	
 	CONSTRAINT diferentes_usuarios_forum
 		CHECK (validado_por IS NULL OR criado_por != validado_por),
@@ -42,7 +49,8 @@ CREATE TABLE private.forum(
 		CHECK (status IN ('WAITING', 'ACTIVE', 'DELETED')),
 	
 	FOREIGN KEY(criado_por) REFERENCES private.usuario(id),
-	FOREIGN KEY(validado_por) REFERENCES private.usuario(id)
+	FOREIGN KEY(validado_por) REFERENCES private.usuario(id),
+	FOREIGN KEY(identidade_visual) REFERENCES private.identidade_visual(id)
 );
 
 -- TAG
@@ -84,7 +92,7 @@ CREATE TABLE private.conteudo(
 CREATE TABLE private.postagem(
 	id INT PRIMARY KEY REFERENCES private.conteudo(id),
 	forum INT REFERENCES private.forum(id) NOT NULL,
-	arquivo BYTEA
+	arquivo TEXT		-- WAY (key) OF THE ARCHIVE WITHIN CLOUDFLARE R2
 );
 
 -- CONTEUDO -> COMENTARIO ESPECIALIZADO
@@ -158,10 +166,40 @@ FROM private.forum f
 JOIN private.usuario u1 ON f.criado_por = u1.id
 LEFT JOIN private.usuario u2 ON f.validado_por = u2.id;
 
+-- user profile -> user information, profile pic, profile banner
+CREATE OR REPLACE VIEW private.perfil_de_usuario AS
+SELECT
+	-- information from usuario
+	usuario.id,
+	usuario.nome,
+	usuario.username,
+	usuario.cargo,
+	usuario.data_criacao,
+	-- information from identidade_visual
+	iddv.img_perfil,
+	iddv.img_banner
+FROM private.usuario usuario
+JOIN private.identidade_visual iddv ON usuario.identidade_visual = iddv.id;
+
+-- postagem -> imagem de perfil e nome de usuário
+-- TODO: finish
+-- postagem tem: imagem de perfil, nome de usuário, tem de vida, primeira tag, conteudo, nª de upvote, nª de downvote, qtd de comentários
+CREATE OR REPLACE VIEW private.exibicao_postagem AS
+SELECT
+	-- information of the creator
+	usuario.username,
+	iddv.img_perfil,		-- user.id -> iddv.img_perfil
+	-- post info
+	post.id,
+	post.conteudo,
+	post.data_criacao,
+	post.criado_por
+
 -- procedures
 -- USER INSERT PROCEDURE
--- USAGE -> CALL user_insert(<nome>, <nome de usuário>, <email>, <senha codificada>);
+-- USAGE -> CALL user_insert(<nome>, <nome de usuário>, <email>, <senha codificada>, <id da img de perfil no cf>, <id da img de banner no cf>);
 CREATE PROCEDURE public.user_insert (
+	OUT p_id INT,
 	p_nome VARCHAR,
 	p_username VARCHAR,
 	p_email VARCHAR,
@@ -172,25 +210,40 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-	INSERT INTO private.usuario (nome, username, email, senha_hash)
-	VALUES (p_nome, p_username, p_email, p_senha_hash);
+	-- TODO: use fixed values for placeholder images
+	-- user can change after
+
+	INSERT INTO private.identidade_visual (img_perfil, img_banner)
+	VALUES ('abc-123', 'cde-456')
+	RETURNING id INTO p_id;
+
+	INSERT INTO private.usuario (nome, username, email, senha_hash, identidade_visual)
+	VALUES (p_nome, p_username, p_email, p_senha_hash, p_id);
 END;
 $$;
 
 -- FORUM INSERT PROCEDURE
 -- USAGE -> CALL forum_insert(<nome do forum>, <descrição do forum>, <id do criador do fórum>);
 CREATE PROCEDURE public.forum_insert (
+	OUT p_id INT,
 	p_titulo VARCHAR,
 	p_descricao VARCHAR,
-	p_criado_por INT
+	p_criado_por INT,
+	p_img_perfil TEXT,
+	p_img_banner TEXT
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-	INSERT INTO private.forum (titulo, descricao, criado_por)
-	VALUES (p_titulo, p_descricao, p_criado_por);
+	INSERT INTO private.identidade_visual (img_perfil, img_banner)
+	-- TODO: change when cloudflare images API is implemented
+	VALUES ('abc-123', 'cde-456')
+	RETURNING id INTO p_id;
+	
+	INSERT INTO private.forum (titulo, descricao, criado_por, identidade_visual)
+	VALUES (p_titulo, p_descricao, p_criado_por, p_id);
 END;
 $$;
 
@@ -211,13 +264,13 @@ END;
 $$;
 
 -- POSTAGEM INSERT PROCEDURE
--- USAGE -> CALL postagem_insert(<conteudo de texto>, <id do autor>, <id do fórum>, <arquivo (opcional)>);
+-- USAGE -> CALL postagem_insert(<conteudo de texto>, <id do autor>, <id do fórum>, <caminho do arquivo (opcional)>);
 CREATE PROCEDURE public.postagem_insert (
 	OUT p_id INT,
 	p_conteudo TEXT,
 	p_criado_por INT,
 	p_forum INT,
-	p_arquivo BYTEA DEFAULT NULL
+	p_arquivo TEXT DEFAULT NULL
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -413,6 +466,35 @@ BEGIN
 	RETURN QUERY
 	SELECT * FROM private.usuario
 	WHERE nome = p_nome;
+END;
+$$;
+
+-- fetch user profile
+-- USAGE -> SELECT public.buscar_perfil_usuario_json('joao123'); or SELECT public.buscar_perfil_usuario_json(1);
+CREATE OR REPLACE FUNCTION public.get_perfil_de_usuario(
+	p_id INT DEFAULT NULL,
+	p_username VARCHAR DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+DECLARE
+	resultado JSON;
+BEGIN
+	SELECT row_to_json(perfil)
+	INTO resultado
+	FROM private.perfil_de_usuario perfil
+	WHERE (p_id IS NOT NULL AND perfil.id = p_id)
+		OR (p_username IS NOT NULL AND perfil.username = p_username);
+		
+	IF resultado IS NULL THEN 
+		RETURN json_build_object (	
+			'error', 'usuário não encontrado', 'id', p_id, 'username', p_username
+		);
+	END IF;
+		
+	RETURN resultado;
 END;
 $$;
 
